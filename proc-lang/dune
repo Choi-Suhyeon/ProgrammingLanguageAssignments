@@ -1,0 +1,5 @@
+(executable
+ (name procLang)
+ (modules procLang)
+ (libraries base stdio)
+ (flags (:standard -w -37)))

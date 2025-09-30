@@ -1,0 +1,5 @@
+(executable
+ (name namelessProcLang)
+ (modules namelessProcLang)
+ (libraries base stdio)
+ (flags (:standard -w -37)))
