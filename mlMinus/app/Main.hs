@@ -13,12 +13,12 @@ newtype App a = App {unApp :: ReaderT Env (ExceptT RuntimeError IO) a}
         ( Generic
         )
     deriving newtype
-        ( Functor
-        , Applicative
+        ( Applicative
+        , Functor
         , Monad
+        , MonadError RuntimeError
         , MonadIO
         , MonadReader Env
-        , MonadError RuntimeError
         )
 
 runApp :: Env -> App a -> IO (Either RuntimeError a)
@@ -145,7 +145,8 @@ programs =
                                 (Cons (Head (Var "l")) Nil)
                         }
                 }
-        , body = Call (Var "reverse") (Cons (Const 1) (Cons (Const 2) (Cons (Const 3) Nil)))
+        , body =
+            Call (Var "reverse") (Cons (Const 1) (Cons (Const 2) (Cons (Const 3) Nil)))
         }
     , Let
         { lhs = "fix"

@@ -1,0 +1,15 @@
+indentation: 4
+column-limit: 80
+function-arrows: leading
+comma-style: leading
+import-export-style: leading
+import-grouping: by-scope-then-qualified
+let-style: newline
+sort-constraints: true
+sort-derived-classes: true
+sort-deriving-clauses: true
+trailing-section-operators: false
+local-modules: 
+- Lib
+- Util
+- Optics

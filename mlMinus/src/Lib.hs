@@ -9,6 +9,7 @@ import Control.Monad.Reader (MonadReader (..))
 import Data.Bool (bool)
 import Data.Char (toLower)
 import Data.Generics.Labels ()
+import Data.Monoid (Endo (..))
 
 import Optics
 import Util
@@ -92,12 +93,13 @@ newtype Env = Env {unEnv :: Variable -> Either RuntimeError Value}
     deriving (Generic)
 
 emptyEnv :: Env
-emptyEnv = Env \v -> Left $ VarNotInScope v
+emptyEnv = Env $ Left . VarNotInScope
 
 extendEnv :: Variable -> Value -> Env -> Env
 extendEnv var val env = Env \var' -> bool (env.unEnv var') (Right val) (var' == var)
 
-runMl :: (MonadReader Env m, MonadError RuntimeError m, MonadIO m) => Program -> m Value
+runMl
+    :: (MonadError RuntimeError m, MonadIO m, MonadReader Env m) => Program -> m Value
 runMl Unit = pure VUnit
 runMl ETrue = pure $ VBool True
 runMl EFalse = pure $ VBool False
@@ -146,16 +148,34 @@ runMl (IsNil e) =
         VList [] -> pure $ VBool True
         VList _ -> pure $ VBool False
         _ -> throwError TypeErrorUnaryOp
-runMl If{cond, thenClause, elseClause} = runMl cond >>= liftEither . ensureVBool >>= runMl . bool elseClause thenClause
+runMl If{cond, thenClause, elseClause} =
+    runMl cond >>= liftEither . ensureVBool >>= runMl . bool elseClause thenClause
 runMl Proc{param, body} = ask >>= \env -> pure $ VProc{param, body, env}
 runMl Let{lhs, rhs, body} = (`local` runMl body) . extendEnv lhs =<< runMl rhs
-runMl LetRec{nProc = p, body} = ask >>= \env -> local (extendEnv p.name VRecProc{name = p.name, param = p.param, body = p.body, env}) (runMl body)
-runMl LetMRec{nProc1 = p1, nProc2 = p2, body} =
+runMl LetRec{nProc = p, body} =
     ask >>= \env ->
-        (`local` runMl body)
-            ( extendEnv p1.name VMRecProc{name1 = p1.name, param1 = p1.param, body1 = p1.body, name2 = p2.name, param2 = p2.param, body2 = p2.body, env}
-                . extendEnv p2.name VMRecProc{name1 = p2.name, param1 = p2.param, body1 = p2.body, name2 = p1.name, param2 = p1.param, body2 = p1.body, env}
-            )
+        local
+            (extendEnv p.name VRecProc{name = p.name, param = p.param, body = p.body, env})
+            (runMl body)
+runMl LetMRec{nProc1 = p1, nProc2 = p2, body} = ask >>= \env -> local ((^. #appEndo) . mconcat $ extends env) (runMl body)
+  where
+    extends :: Env -> [Endo Env]
+    extends env = ($ env) <$> [extendEnvWithMRecProc p1 p2, extendEnvWithMRecProc p2 p1]
+
+    extendEnvWithMRecProc :: NamedProc -> NamedProc -> Env -> Endo Env
+    extendEnvWithMRecProc p1 p2 env =
+        Endo
+            $ extendEnv
+                p1.name
+                VMRecProc
+                    { name1 = p1.name
+                    , param1 = p1.param
+                    , body1 = p1.body
+                    , name2 = p2.name
+                    , param2 = p2.param
+                    , body2 = p2.body
+                    , env
+                    }
 runMl (Call e1 e2) =
     runMl e2 >>= \a ->
         runMl e1 >>= \case
@@ -170,7 +190,17 @@ runMl (Call e1 e2) =
                     env
                         & extendEnv param1 a
                         & extendEnv name1 recMProc
-                        & extendEnv name2 VMRecProc{name1 = name2, param1 = param2, body1 = body2, name2 = name1, param2 = param1, body2 = body1, env}
+                        & extendEnv
+                            name2
+                            VMRecProc
+                                { name1 = name2
+                                , param1 = param2
+                                , body1 = body2
+                                , name2 = name1
+                                , param2 = param1
+                                , body2 = body1
+                                , env
+                                }
             _ -> throwError ExpectedProcedure
 runMl (Print e) = runMl e >>= liftIO . putStrLn . toPrintStrFromValue >> pure VUnit
   where
@@ -199,13 +229,13 @@ ensureVList :: Value -> Either RuntimeError [Value]
 ensureVList (VList xs) = Right xs
 ensureVList _ = Left ExpectedList
 
-runBinOp ::
-    (MonadReader Env m, MonadError RuntimeError m, MonadIO m) =>
-    (Value -> Either RuntimeError a) ->
-    (a -> a -> Either RuntimeError Value) ->
-    Exp ->
-    Exp ->
-    m Value
+runBinOp
+    :: (MonadError RuntimeError m, MonadIO m, MonadReader Env m)
+    => (Value -> Either RuntimeError a)
+    -> (a -> a -> Either RuntimeError Value)
+    -> Exp
+    -> Exp
+    -> m Value
 runBinOp p f e1 e2 = liftEither =<< f <$> run e1 <*> run e2
   where
     run = runMl >=> liftEither . p
